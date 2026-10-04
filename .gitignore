@@ -1,0 +1,22 @@
+@"
+# IntelliJ / Android Studio
+.idea/
+*.iml
+
+# Gradle
+.gradle/
+**/build/
+
+# Android local machine config
+local.properties
+
+# Runtime generated backend files
+backend/uploads/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+"@ | Set-Content .gitignore
