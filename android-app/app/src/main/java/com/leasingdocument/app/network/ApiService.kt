@@ -14,6 +14,12 @@ import retrofit2.http.Path
 
 interface ApiService {
 
+    @POST("api/customers/register")
+    suspend fun registerCustomer(
+        @Body request: RegisterCustomerRequest
+    ): Response<Customer>
+
+
     // =========================================================
     // AUTHENTICATION
     // =========================================================

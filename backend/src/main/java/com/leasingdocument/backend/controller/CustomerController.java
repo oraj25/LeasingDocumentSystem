@@ -6,6 +6,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import com.leasingdocument.backend.dto.RegisterCustomerRequest;
+import org.springframework.http.HttpStatus;
+
 
 @RestController
 @RequestMapping("/api/customers")
@@ -34,6 +37,15 @@ public class CustomerController {
             @PathVariable Long id) {
 
         return customerService.getCustomerById(id);
+    }
+
+
+    // Registration creates a new customer; clients cannot set IDs or timestamps.
+    @PostMapping("/register")
+    @PreAuthorize("hasAnyRole('ADMIN','AGENT')")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Customer registerCustomer(@RequestBody RegisterCustomerRequest request) {
+        return customerService.registerCustomer(request);
     }
 
 

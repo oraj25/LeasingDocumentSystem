@@ -43,7 +43,7 @@ fun AgentDashboard(
 
     when (currentScreen) {
 
-        "UPLOAD" -> {
+        "CAPTURE" -> {
 
             Column(
                 modifier = Modifier.fillMaxSize()
@@ -61,7 +61,7 @@ fun AgentDashboard(
                     Text("BACK")
                 }
 
-                UploadDocumentScreen()
+                CapturePreparationScreen()
             }
         }
 
@@ -128,11 +128,11 @@ fun AgentDashboard(
 
                 Button(
                     onClick = {
-                        currentScreen = "UPLOAD"
+                        currentScreen = "CAPTURE"
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Upload Document")
+                    Text("Capture Document")
                 }
 
                 Spacer(
