@@ -85,6 +85,10 @@ android {
 
 dependencies {
 
+    // Existing CaptureDocument OpenCV checks. Camera uses Android Camera2 directly.
+    implementation("org.opencv:opencv:4.10.0")
+
+
     // =========================================================
     // ANDROID
     // =========================================================

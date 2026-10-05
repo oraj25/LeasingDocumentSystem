@@ -4,6 +4,9 @@
     <!-- Required for communication with the Spring Boot backend. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -12,6 +15,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.LeasingDocumentApp"
         android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".capture.LiveCaptureActivity"
+            android:exported="false" />
+        <activity
+            android:name=".capture.CaptureDraftsActivity"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"

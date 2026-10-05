@@ -1,5 +1,12 @@
 package com.leasingdocument.app.screens
 
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import com.leasingdocument.app.capture.LiveCaptureActivity
+import com.leasingdocument.app.capture.CaptureDraftsActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,7 +32,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-/** Step 5 only: prepares selection; no image capture or submission yet. */
+/** Select capture context and open the internal live-camera activity. */
 @Composable
 fun CapturePreparationScreen() {
     var page by rememberSaveable { mutableStateOf("CUSTOMER") }
@@ -45,6 +52,13 @@ fun CapturePreparationScreen() {
     var email by rememberSaveable { mutableStateOf("") }
     var address by rememberSaveable { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var draftSaved by rememberSaveable { mutableStateOf(false) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) draftSaved = true
+    }
     val selectedCustomer = customers.firstOrNull { it.customerId == customerId }
     val selectedType = types.firstOrNull { it.typeCode == typeCode }
 
@@ -239,8 +253,30 @@ fun CapturePreparationScreen() {
                         Text("Customer: ${selectedCustomer?.fullName ?: "Selection unavailable"}")
                         Text("NIC: ${selectedCustomer?.nic.orEmpty()}")
                         Text("Document: ${selectedType?.typeName ?: selectedType?.typeCode ?: "Selection unavailable"}")
-                        Text("Live camera capture will be available after the next integration step. No document has been submitted.")
-                        Button(onClick = {}, enabled = false) { Text("Open live camera — coming next") }
+                        Text("Capture a photo and save an encrypted draft on this phone. Backend submission is not connected yet.")
+                        if (draftSaved) Text("Draft saved on this phone. It has not been submitted.")
+                        Button(
+                            enabled = selectedCustomer != null && selectedType != null,
+                            onClick = {
+                                val customer = selectedCustomer
+                                val type = selectedType
+                                val selectedId = customer?.customerId
+                                val selectedCode = type?.typeCode
+                                if (selectedId != null && !selectedCode.isNullOrBlank()) {
+                                    draftSaved = false
+                                    cameraLauncher.launch(
+                                        Intent(context, LiveCaptureActivity::class.java)
+                                            .putExtra("customerId", selectedId)
+                                            .putExtra("customerName", customer?.fullName.orEmpty())
+                                            .putExtra("documentTypeCode", selectedCode)
+                                            .putExtra("documentTypeName", type?.typeName)
+                                    )
+                                }
+                            }
+                        ) { Text("Open live camera") }
+                        OutlinedButton(onClick = {
+                            context.startActivity(Intent(context, CaptureDraftsActivity::class.java))
+                        }) { Text("View local drafts") }
                         OutlinedButton(onClick = { page = "TYPE" }) { Text("Change document type") }
                         OutlinedButton(onClick = { page = "CUSTOMER" }) { Text("Change customer") }
                     }

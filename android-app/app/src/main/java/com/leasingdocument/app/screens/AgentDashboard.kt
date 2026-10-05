@@ -1,5 +1,8 @@
 package com.leasingdocument.app.screens
 
+import android.content.Intent
+import androidx.compose.ui.platform.LocalContext
+import com.leasingdocument.app.capture.CaptureDraftsActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,6 +29,8 @@ import androidx.compose.ui.unit.sp
 fun AgentDashboard(
     onLogout: () -> Unit = {}
 ) {
+
+    val context = LocalContext.current
 
     var currentScreen by rememberSaveable {
         mutableStateOf("DASHBOARD")
@@ -160,6 +165,14 @@ fun AgentDashboard(
                 ) {
                     Text("Verification Results")
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        context.startActivity(Intent(context, CaptureDraftsActivity::class.java))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Local Capture Drafts") }
 
                 Spacer(
                     modifier = Modifier.height(32.dp)
