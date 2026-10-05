@@ -15,8 +15,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @EnableMethodSecurity
 public class SecurityConfig {
 
-    private final JwtAuthenticationFilter
-            jwtAuthenticationFilter;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
 
     public SecurityConfig(
@@ -28,28 +27,26 @@ public class SecurityConfig {
     }
 
 
+    // =========================================================
+    // SECURITY FILTER CHAIN
+    // =========================================================
+
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http
     ) throws Exception {
 
-
         http
 
-                // =================================================
-                // REST API - DISABLE CSRF
-                // =================================================
-
+                // REST API uses JWT rather than CSRF tokens.
                 .csrf(
                         csrf ->
                                 csrf.disable()
                 )
 
 
-                // =================================================
-                // JWT STATELESS AUTHENTICATION
-                // =================================================
-
+                // The application does not use server-side
+                // HTTP sessions for authentication.
                 .sessionManagement(
                         session ->
                                 session.sessionCreationPolicy(
@@ -59,45 +56,33 @@ public class SecurityConfig {
 
 
                 // =================================================
-                // ACCESS CONTROL
+                // ENDPOINT AUTHORIZATION
                 // =================================================
 
                 .authorizeHttpRequests(
                         auth -> auth
 
-
-                                // =================================
-                                // LOGIN DOES NOT REQUIRE JWT
-                                // =================================
-
+                                // Login must be accessible without JWT.
                                 .requestMatchers(
                                         "/api/auth/login"
                                 )
                                 .permitAll()
 
-
-                                // =================================
-                                // SPRING ERROR ENDPOINT
-                                // =================================
-
+                                // Allow Spring's error endpoint.
                                 .requestMatchers(
                                         "/error"
                                 )
                                 .permitAll()
 
-
-                                // =================================
-                                // LOGOUT AND EVERYTHING ELSE
-                                // REQUIRE VALID JWT
-                                // =================================
-
+                                // All other endpoints require
+                                // authenticated JWT access.
                                 .anyRequest()
                                 .authenticated()
                 )
 
 
                 // =================================================
-                // JWT FILTER
+                // JWT AUTHENTICATION FILTER
                 // =================================================
 
                 .addFilterBefore(
@@ -110,9 +95,9 @@ public class SecurityConfig {
     }
 
 
-    // =============================================================
-    // BCRYPT PASSWORD ENCODER
-    // =============================================================
+    // =========================================================
+    // PASSWORD HASHING
+    // =========================================================
 
     @Bean
     public PasswordEncoder passwordEncoder() {

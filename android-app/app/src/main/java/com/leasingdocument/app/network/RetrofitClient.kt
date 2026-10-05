@@ -1,5 +1,6 @@
 package com.leasingdocument.app.network
 
+import com.leasingdocument.app.BuildConfig
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -8,38 +9,79 @@ import retrofit2.converter.gson.GsonConverterFactory
 
 object RetrofitClient {
 
-    private const val BASE_URL = "http://172.20.10.2:8080/"
+    /*
+     * Physical Android phone -> Windows computer running Spring Boot.
+     *
+     * Windows Wi-Fi IPv4:
+     * 10.48.150.89
+     *
+     * Phone and computer must be connected to the same network.
+     */
+    private const val BASE_URL = "http://10.48.150.89:8080/"
 
-    private val loggingInterceptor =
-        HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
-        }
+
+    // =========================================================
+    // AUTHORIZATION INTERCEPTOR
+    // =========================================================
 
     private val authInterceptor = Interceptor { chain ->
+
         val originalRequest = chain.request()
 
-        val requestBuilder = originalRequest
-            .newBuilder()
+        val requestBuilder = originalRequest.newBuilder()
 
-        AuthSession.token?.let { token ->
-            requestBuilder.addHeader(
-                "Authorization",
-                "Bearer $token"
-            )
-        }
+        AuthSession.token
+            ?.takeIf { it.isNotBlank() }
+            ?.let { token ->
+                requestBuilder.header(
+                    "Authorization",
+                    "Bearer $token"
+                )
+            }
 
         chain.proceed(
             requestBuilder.build()
         )
     }
 
-    private val client =
+
+    // =========================================================
+    // HTTP LOGGING
+    // =========================================================
+
+    private val loggingInterceptor =
+        HttpLoggingInterceptor().apply {
+
+            redactHeader("Authorization")
+
+            level = HttpLoggingInterceptor.Level.BODY
+        }
+
+
+    // =========================================================
+    // OKHTTP CLIENT
+    // =========================================================
+
+    private val client: OkHttpClient by lazy {
+
         OkHttpClient.Builder()
             .addInterceptor(authInterceptor)
-            .addInterceptor(loggingInterceptor)
+            .apply {
+
+                if (BuildConfig.DEBUG) {
+                    addInterceptor(loggingInterceptor)
+                }
+            }
             .build()
+    }
+
+
+    // =========================================================
+    // RETROFIT
+    // =========================================================
 
     val apiService: ApiService by lazy {
+
         Retrofit.Builder()
             .baseUrl(BASE_URL)
             .client(client)
