@@ -6,88 +6,64 @@ import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class IntegrityResultService {
 
     private final IntegrityResultRepository integrityResultRepository;
 
-
     public IntegrityResultService(
             IntegrityResultRepository integrityResultRepository
     ) {
-
-        this.integrityResultRepository =
-                integrityResultRepository;
+        this.integrityResultRepository = integrityResultRepository;
     }
-
 
     public List<IntegrityResult> getAllIntegrityResults() {
-
-        return integrityResultRepository
-                .findAll();
+        return integrityResultRepository.findAll();
     }
 
-
-    public IntegrityResult getIntegrityResultById(
-            Long id
-    ) {
-
+    public IntegrityResult getIntegrityResultById(Long id) {
         return integrityResultRepository
                 .findById(id)
                 .orElse(null);
     }
 
-
-    // =========================================================
-    // GET LATEST INTEGRITY RESULT FOR DOCUMENT
-    // =========================================================
-
-    public IntegrityResult getLatestResultForDocument(
-            Long documentId
-    ) {
+    public IntegrityResult getLatestForDocument(Long documentId) {
+        if (documentId == null) {
+            return null;
+        }
 
         return integrityResultRepository
                 .findAll()
                 .stream()
                 .filter(result ->
-                        documentId.equals(
-                                result.getDocumentId()
-                        )
+                        documentId.equals(result.getDocumentId())
                 )
                 .max(
-                        Comparator.comparing(
-                                IntegrityResult::getIntegrityResultId
+                        Comparator.comparingLong(result ->
+                                result.getIntegrityResultId() == null
+                                        ? Long.MIN_VALUE
+                                        : result.getIntegrityResultId()
                         )
                 )
                 .orElse(null);
     }
 
-
     public IntegrityResult saveIntegrityResult(
             IntegrityResult integrityResult
     ) {
-
         return integrityResultRepository
-                .save(
-                        integrityResult
-                );
+                .save(integrityResult);
     }
 
-
-    public void deleteIntegrityResult(
-            Long id
-    ) {
-
-        integrityResultRepository
-                .deleteById(id);
+    public void deleteIntegrityResult(Long id) {
+        integrityResultRepository.deleteById(id);
     }
-
 
     public List<IntegrityResult> getResultsForDocuments(
             List<Long> documentIds
     ) {
-
         return integrityResultRepository
                 .findAll()
                 .stream()
@@ -96,6 +72,6 @@ public class IntegrityResultService {
                                 result.getDocumentId()
                         )
                 )
-                .toList();
+                .collect(Collectors.toList());
     }
 }

@@ -14,6 +14,10 @@ import retrofit2.http.Path
 
 interface ApiService {
 
+    // =========================================================
+    // CUSTOMER REGISTRATION - Step 5 workflow
+    // =========================================================
+
     @POST("api/customers/register")
     suspend fun registerCustomer(
         @Body request: RegisterCustomerRequest
@@ -29,7 +33,6 @@ interface ApiService {
         @Body request: LoginRequest
     ): Response<LoginResponse>
 
-
     @POST("api/auth/logout")
     suspend fun logout(
         @Body request: LogoutRequest
@@ -41,8 +44,7 @@ interface ApiService {
     // =========================================================
 
     @GET("api/agents")
-    suspend fun getAgents():
-            Response<List<Agent>>
+    suspend fun getAgents(): Response<List<Agent>>
 
 
     // =========================================================
@@ -50,8 +52,7 @@ interface ApiService {
     // =========================================================
 
     @GET("api/audit-logs")
-    suspend fun getAuditLogs():
-            Response<List<AuditLog>>
+    suspend fun getAuditLogs(): Response<List<AuditLog>>
 
 
     // =========================================================
@@ -59,8 +60,7 @@ interface ApiService {
     // =========================================================
 
     @GET("api/customers")
-    suspend fun getCustomers():
-            Response<List<Customer>>
+    suspend fun getCustomers(): Response<List<Customer>>
 
 
     // =========================================================
@@ -68,14 +68,11 @@ interface ApiService {
     // =========================================================
 
     @GET("api/document-types")
-    suspend fun getDocumentTypes():
-            Response<List<DocumentType>>
-
+    suspend fun getDocumentTypes(): Response<List<DocumentType>>
 
     @GET("api/document-types/code/{typeCode}")
     suspend fun getDocumentTypeByCode(
-        @Path("typeCode")
-        typeCode: String
+        @Path("typeCode") typeCode: String
     ): Response<DocumentType>
 
 
@@ -84,8 +81,7 @@ interface ApiService {
     // =========================================================
 
     @GET("api/devices")
-    suspend fun getDevices():
-            Response<List<Device>>
+    suspend fun getDevices(): Response<List<Device>>
 
 
     // =========================================================
@@ -93,8 +89,7 @@ interface ApiService {
     // =========================================================
 
     @GET("api/sessions")
-    suspend fun getSessions():
-            Response<List<Session>>
+    suspend fun getSessions(): Response<List<Session>>
 
 
     // =========================================================
@@ -102,53 +97,64 @@ interface ApiService {
     // =========================================================
 
     @GET("api/documents")
-    suspend fun getDocuments():
-            Response<List<Document>>
-
+    suspend fun getDocuments(): Response<List<Document>>
 
     @GET("api/documents/my")
-    suspend fun getMyDocuments():
-            Response<List<Document>>
+    suspend fun getMyDocuments(): Response<List<Document>>
+
+
+    // =========================================================
+    // FINAL LIVE-CAMERA SECURE SUBMISSION
+    // =========================================================
+
+    @Multipart
+    @POST("api/documents/captured")
+    suspend fun submitCapturedDocument(
+        @Part file: MultipartBody.Part,
+        @Part("customerId") customerId: RequestBody,
+        @Part("documentTypeCode") documentTypeCode: RequestBody,
+        @Part("deviceId") deviceId: RequestBody,
+        @Part("originalHash") originalHash: RequestBody,
+        @Part("capturedAt") capturedAt: RequestBody,
+        @Part("imageWidth") imageWidth: RequestBody,
+        @Part("imageHeight") imageHeight: RequestBody,
+        @Part("blurScore") blurScore: RequestBody,
+        @Part("brightnessScore") brightnessScore: RequestBody,
+        @Part("blurPassed") blurPassed: RequestBody,
+        @Part("brightnessPassed") brightnessPassed: RequestBody,
+        @Part("resolutionPassed") resolutionPassed: RequestBody,
+        @Part("qualityStatus") qualityStatus: RequestBody,
+        @Part("captureSource") captureSource: RequestBody,
+        @Part("captureLocation") captureLocation: RequestBody? = null,
+        @Part("captureLatitude") captureLatitude: RequestBody? = null,
+        @Part("captureLongitude") captureLongitude: RequestBody? = null
+    ): Response<SecureSubmissionResponse>
 
 
     // =========================================================
     // LEGACY FILE UPLOAD
-    //
-    // TEMPORARY ONLY.
-    //
-    // This exists so the current baseline UI continues to
-    // compile while we build the secure camera workflow.
-    //
-    // The final Agent workflow WILL NOT call this endpoint.
+    // Kept for compatibility; final camera workflow uses /captured.
     // =========================================================
 
     @Multipart
     @POST("api/documents/upload")
     suspend fun uploadDocument(
-        @Part
-        file: MultipartBody.Part,
-
-        @Part("customerId")
-        customerId: RequestBody,
-
-        @Part("documentTypeId")
-        documentTypeId: RequestBody,
-
-        @Part("agentId")
-        agentId: RequestBody? = null
-
+        @Part file: MultipartBody.Part,
+        @Part("customerId") customerId: RequestBody,
+        @Part("documentTypeId") documentTypeId: RequestBody,
+        @Part("agentId") agentId: RequestBody? = null
     ): Response<ResponseBody>
 
 
     // =========================================================
     // DOCUMENT FILE
+    // Secure captures are decrypted and integrity-verified by Spring
+    // before bytes are returned to the authenticated caller.
     // =========================================================
 
     @GET("api/documents/image/{fileName}")
     suspend fun getDocumentImage(
-        @Path("fileName")
-        fileName: String
-
+        @Path("fileName") fileName: String
     ): Response<ResponseBody>
 
 
@@ -158,9 +164,7 @@ interface ApiService {
 
     @DELETE("api/documents/{id}")
     suspend fun deleteDocument(
-        @Path("id")
-        documentId: Long
-
+        @Path("id") documentId: Long
     ): Response<ResponseBody>
 
 
@@ -169,8 +173,7 @@ interface ApiService {
     // =========================================================
 
     @GET("api/alteration-results")
-    suspend fun getAlterationResults():
-            Response<List<AlterationResult>>
+    suspend fun getAlterationResults(): Response<List<AlterationResult>>
 
 
     // =========================================================
@@ -178,6 +181,5 @@ interface ApiService {
     // =========================================================
 
     @GET("api/integrity-results")
-    suspend fun getIntegrityResults():
-            Response<List<IntegrityResult>>
+    suspend fun getIntegrityResults(): Response<List<IntegrityResult>>
 }
