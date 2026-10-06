@@ -54,7 +54,7 @@ object RetrofitClient {
 
             redactHeader("Authorization")
 
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.BASIC
         }
 
 
@@ -66,6 +66,8 @@ object RetrofitClient {
 
         OkHttpClient.Builder()
             .addInterceptor(authInterceptor)
+            .readTimeout(240, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(260, java.util.concurrent.TimeUnit.SECONDS)
             .apply {
 
                 if (BuildConfig.DEBUG) {

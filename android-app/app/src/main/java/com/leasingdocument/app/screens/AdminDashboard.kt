@@ -49,6 +49,15 @@ fun AdminDashboard(
     // =========================================================
 
     when (currentScreen) {
+        "ANALYSIS" -> {
+            Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+                Button(onClick = { currentScreen = "DASHBOARD" }, modifier = Modifier.padding(16.dp)) {
+                    Text("BACK")
+                }
+                AlterationAnalysisScreen()
+            }
+        }
+
 
 
         // =====================================================
@@ -206,6 +215,11 @@ fun AdminDashboard(
                     modifier = Modifier.height(40.dp)
                 )
 
+
+                Button(onClick = { currentScreen = "ANALYSIS" }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Document Alteration Analysis")
+                }
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // =============================================
                 // MANAGE AGENTS BUTTON

@@ -85,6 +85,9 @@ android {
 
 dependencies {
 
+    // Bundled on-device Latin OCR only; Camera2 and alteration methods remain unchanged.
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
     // Existing CaptureDocument OpenCV checks. Camera uses Android Camera2 directly.
     implementation("org.opencv:opencv:4.10.0")
 

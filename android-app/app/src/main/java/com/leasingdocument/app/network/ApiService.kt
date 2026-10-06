@@ -182,4 +182,15 @@ interface ApiService {
 
     @GET("api/integrity-results")
     suspend fun getIntegrityResults(): Response<List<IntegrityResult>>
+    @POST("api/analysis/documents/{id}")
+    suspend fun analyzeDocument(@Path("id") documentId: Long,
+        @Body request: AnalysisRequest): Response<AlterationResult>
+
+    @GET("api/analysis/results/{id}/report")
+    suspend fun getAnalysisReport(@Path("id") resultId: Long): Response<ResponseBody>
+
+    @POST("api/analysis/results/{id}/review")
+    suspend fun reviewAnalysis(@Path("id") resultId: Long,
+        @Body request: AnalysisReviewRequest): Response<AlterationResult>
+
 }
