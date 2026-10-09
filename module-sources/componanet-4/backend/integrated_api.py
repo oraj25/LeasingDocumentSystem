@@ -16,8 +16,10 @@ from starlette.concurrency import run_in_threadpool
 from PIL import Image, ImageOps
 from src.analysis_pipeline import run_analysis_pipeline, TEMPLATE_FILES
 from src.ocr_validation import validate_ocr_payload
+from src.analysis_preflight import check_document_text, VERSION
+from src.document_fields import enrich_ocr
 
-app = FastAPI(title="Integrated Component 4", version="step8-1")
+app = FastAPI(title="Integrated Component 4", version=VERSION)
 _TOKEN = os.environ.get("ALTERATION_API_TOKEN", "")
 if len(_TOKEN) < 32:
     raise RuntimeError("Set ALTERATION_API_TOKEN to the shared random token (at least 32 characters).")
@@ -42,8 +44,6 @@ def health(request: Request):
 
 def analyse_payload(payload):
     kind = payload.get("documentType")
-    if kind not in TEMPLATE_FILES:
-        return {"status": "NOT_SUPPORTED", "message": "No configured analysis template for this document type."}
     quality = payload.get("quality", {})
     if quality.get("status") != "PASSED" or not all(
             quality.get(k) is True for k in ("blurPassed", "brightnessPassed", "resolutionPassed")):
@@ -79,22 +79,48 @@ def analyse_payload(payload):
                     raise HTTPException(422, "OCR coordinate space mismatch")
                 image_path = work / "upright.png"
                 oriented.convert("RGB").save(image_path)
+        ocr = enrich_ocr(ocr, kind)
         validation = validate_ocr_payload(ocr, kind, image_path)
         output = work / "analysis"
-        result = run_analysis_pipeline(image_path, kind, output, ocr_validation=validation)
-        if result.get("status") != "COMPLETE":
+        issue = check_document_text(ocr, kind)
+        invalid_boxes = any(i.get("code", "").startswith(("INVALID_BOUNDING", "INCOMPLETE_BOUNDING", "BOUNDING_BOX_OUTSIDE"))
+                            for i in validation.get("issues", []))
+        if issue or invalid_boxes:
+            result = {"status": "INCOMPLETE", "reasonCode": issue[0] if issue else "OCR_COORDINATES_INVALID",
+                      "message": issue[1] if issue else "OCR coordinates are invalid. Run OCR again on the original image.",
+                      "risk_score": None, "risk_level": None, "suspicious_area_count": 0,
+                      "recommended_action": "MANUAL_REVIEW_REQUIRED"}
+        else:
+            result = run_analysis_pipeline(image_path, kind, output, ocr_validation=validation)
+        if result.get("status") not in ("COMPLETE", "INCOMPLETE"):
             raise HTTPException(502, "Analysis pipeline did not complete")
         result["imageSha256"] = digest
         result["ocr"] = ocr
         result["ocr_validation"] = validation
-        result["algorithmVersion"] = "component4-step8-1"
-        # Return bytes, never expose internal filesystem paths or unprotected image URLs.
-        result["highlightedImageBase64"] = base64.b64encode(
-            (output / "highlighted_suspicious_areas.png").read_bytes()).decode("ascii")
-        result["normalizedImageBase64"] = base64.b64encode(
-            (output / "normalized" / "document.png").read_bytes()).decode("ascii")
-        result["message"] = ("Possible alteration screening only. Manual review determines the final decision. "
-                             "OCR candidates and template alignment must be checked by the reviewer.")
+        result["algorithmVersion"] = VERSION
+        result["screeningOnly"] = True
+        result["recommended_action"] = "MANUAL_REVIEW_REQUIRED"
+        if "risk_details" in result:
+            result["risk_details"]["recommended_action"] = "MANUAL_REVIEW_REQUIRED"
+        if result["status"] == "COMPLETE":
+            crop_path = output / "preprocessing" / "cropped_document.png"
+            if crop_path.is_file():
+                result["croppedImageBase64"] = base64.b64encode(crop_path.read_bytes()).decode("ascii")
+            result["highlightedImageBase64"] = base64.b64encode(
+                (output / "highlighted_suspicious_areas.png").read_bytes()).decode("ascii")
+            result["normalizedImageBase64"] = base64.b64encode(
+                (output / "normalized" / "document.png").read_bytes()).decode("ascii")
+            result["message"] = ("Fixed artwork and document background comparison completed. "
+                                 "The score measures local discrepancies after alignment and lighting correction. "
+                                 "Holder text, photographs and signatures are excluded from reference comparison.")
+        else:
+            # An incomplete analysis has an unmodified preview, no highlights and no risk score.
+            with Image.open(image_path) as preview:
+                preview.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                buffer = io.BytesIO()
+                preview.save(buffer, format="PNG")
+                result["originalImageBase64"] = base64.b64encode(buffer.getvalue()).decode("ascii")
+        # Missing OCR fields require review; they are not evidence of alteration.
         # Remove temporary filesystem paths from nested diagnostic metadata.
         def sanitize(value):
             if isinstance(value, dict):

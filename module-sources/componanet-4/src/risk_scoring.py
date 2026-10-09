@@ -432,7 +432,8 @@ def calculate_ocr_score(
 
 
     score = 0.0
-
+    format_evidence = {"INVALID_NIC_FORMAT", "INVALID_LICENCE_NUMBER", "NIC_TEXT_INCONSISTENCY",
+                       "LICENCE_TEXT_INCONSISTENCY", "INVALID_DATE_FORMAT", "INVALID_BLOOD_GROUP"}
 
     for issue in issues:
 
@@ -452,6 +453,8 @@ def calculate_ocr_score(
         )
 
 
+        if issue_code not in format_evidence:
+            continue
         score += (
             OCR_ISSUE_WEIGHTS.get(
                 issue_code,
@@ -1067,9 +1070,15 @@ def calculate_risk_score(
     final_score = 0.0
 
 
-    for component, weight in (
-        COMPONENT_WEIGHTS.items()
-    ):
+    active_weights = dict(COMPONENT_WEIGHTS)
+    if not isinstance(alteration_analysis.get("photo_analysis"), dict):
+        active_weights.pop("photo", None)
+    if not alteration_analysis.get("symbol_analysis"):
+        active_weights.pop("symbol", None)
+    total_weight = sum(active_weights.values())
+    active_weights = {k: v/total_weight for k, v in active_weights.items()}
+
+    for component, weight in active_weights.items():
 
         score = (
             component_scores[
@@ -1144,6 +1153,8 @@ def calculate_risk_score(
 
 
     for component in visual_components:
+        if component not in active_weights:
+            continue
 
         if (
             component_scores[
@@ -1271,6 +1282,9 @@ def calculate_risk_score(
 
         "findings":
             findings,
+
+        "detector_coverage": {"active": list(active_weights),
+                              "not_applicable": [k for k in COMPONENT_WEIGHTS if k not in active_weights]},
 
         "thresholds":
             {

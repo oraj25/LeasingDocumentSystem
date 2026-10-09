@@ -13,6 +13,9 @@ from PIL import Image
 SUPPORTED_DOCUMENT_TYPES = {
     "NIC",
     "DRIVING_LICENCE",
+    "BANK_STATEMENT",
+    "BUSINESS_REGISTRATION",
+    "VEHICLE_CR_BOOK",
 }
 
 
@@ -231,7 +234,7 @@ def parse_date_candidate(value):
 
 
     match = re.fullmatch(
-        r"(\d{1,4})[./-](\d{1,2})[./-](\d{1,4})",
+        r"(\d{1,4})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,4})",
         text,
     )
 
@@ -1021,6 +1024,18 @@ def validate_ocr_payload(
             )
         )
 
+
+    elif internal_document_type in {"BANK_STATEMENT", "BUSINESS_REGISTRATION", "VEHICLE_CR_BOOK"}:
+        dates = fields.get("dates", [])
+        if not isinstance(dates, list):
+            issues.append(create_issue("INVALID_DATE_LIST", "dates", "Date candidates must be a list."))
+        elif dates and not all(validate_date(value) for value in dates):
+            issues.append(create_issue("INVALID_DATE_FORMAT", "dates", "One or more date candidates require manual checking."))
+        # Specific candidates are shown separately; absence is an OCR review issue, never fraud proof.
+        expected = {"BANK_STATEMENT": "accountNumberCandidates", "BUSINESS_REGISTRATION": "companyNumberCandidates",
+                    "VEHICLE_CR_BOOK": "registrationNumberCandidates"}[internal_document_type]
+        if not fields.get(expected):
+            issues.append(create_issue("FIELD_NOT_EXTRACTED", expected, "This field could not be extracted confidently; check the original document."))
 
     else:
 

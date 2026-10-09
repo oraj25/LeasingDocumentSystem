@@ -10,16 +10,12 @@ from src.risk_scoring import (
     calculate_risk_score,
 )
 
-from src.document_crop import (
-    crop_document,
-)
+from src.analysis_preflight import register_document, VERSION
+from src.visual_evidence import analyse_visual_evidence, score_evidence
 # =========================================================
 # IMPORT OUR EXISTING ALGORITHMS
 # =========================================================
 
-from src.normalize import (
-    resize_image_manually,
-)
 
 from src.extract_regions import (
     normalized_to_pixels,
@@ -84,20 +80,8 @@ REGION_CONFIG_FILE = (
 # APPROVED TEMPLATE FILES
 # =========================================================
 
-TEMPLATE_FILES = {
+from src.document_profiles import TEMPLATE_FILES
 
-    "NIC":
-        PROJECT_ROOT
-        / "data"
-        / "templates"
-        / "nic_template_v1.jpg",
-
-    "DRIVING_LICENCE":
-        PROJECT_ROOT
-        / "data"
-        / "templates"
-        / "driving_licence_template_v1.jpg",
-}
 
 
 # =========================================================
@@ -196,16 +180,9 @@ def normalize_submitted_document(
         )
 
 
-        normalized_document = (
-            resize_image_manually(
-
-                submitted_image,
-
-                template_width,
-
-                template_height,
-            )
-        )
+        if submitted_image.size != template_image.size:
+            raise ValueError("Document must be registered before ROI analysis")
+        normalized_document = submitted_image.copy()
 
 
     # =====================================================
@@ -784,7 +761,6 @@ def run_symbol_analysis(
 
 
     valid_types = {
-        "signature",
         "logo",
         "security_feature",
     }
@@ -1249,60 +1225,26 @@ def run_analysis_pipeline(
             )
         )
 
-    # =====================================================
-    # 0. DOCUMENT CROPPING
-    # =====================================================
-
-    preprocessing_folder = (
-        output_folder
-        / "preprocessing"
-    )
-
-
-    cropped_document_path = (
-        preprocessing_folder
-        / "cropped_document.png"
-    )
-
-
-    crop_result = (
-        crop_document(
-
-            captured_image_path,
-
-            cropped_document_path,
-        )
-    )
-
-
-    save_json(
-
-        preprocessing_folder
-        / "crop_result.json",
-
-        crop_result,
-    )
-
-
-    # =====================================================
-    # 1. NORMALIZATION
-    # =====================================================
-
-    (
-        normalized_template,
-        normalized_document,
-        width,
-        height,
-
-    ) = normalize_submitted_document(
-
-        cropped_document_path,
-
-        template_path,
-
-        output_folder,
-    )
-
+    # Fail closed before any detector or risk calculation.
+    if not isinstance(ocr_validation, dict) or not ocr_validation.get("ocr_text_present"):
+        return {"status": "INCOMPLETE", "message": "Readable OCR is required before alteration scoring.",
+                "risk_score": None, "risk_level": None, "recommended_action": "MANUAL_REVIEW_REQUIRED"}
+    with Image.open(captured_image_path) as captured, Image.open(template_path) as template:
+        registered, alignment = register_document(captured, template, document_type)
+    if registered is None:
+        return {"status": "INCOMPLETE", "message": alignment["message"], "alignment": alignment,
+                "risk_score": None, "risk_level": None, "recommended_action": "MANUAL_REVIEW_REQUIRED"}
+    preprocessing_folder = output_folder / "preprocessing"
+    preprocessing_folder.mkdir(parents=True, exist_ok=True)
+    cropped_image = alignment.pop("_croppedImage", None)
+    if cropped_image is not None:
+        cropped_image.save(preprocessing_folder / "cropped_document.png")
+        cropped_image.close()
+    registered_path = preprocessing_folder / "registered_document.png"
+    registered.save(registered_path)
+    save_json(preprocessing_folder / "alignment.json", alignment)
+    normalized_template, normalized_document, width, height = normalize_submitted_document(
+        registered_path, template_path, output_folder)
 
     # =====================================================
     # 2. ROI EXTRACTION
@@ -1324,117 +1266,23 @@ def run_analysis_pipeline(
     )
 
 
-    # =====================================================
-    # 3. BACKGROUND ANALYSIS
-    # =====================================================
+    # Previous comparisons used another holder's variable fields. Do not run
+    # or score those measurements as evidence of alteration.
+    background_results = {}
+    edge_results = {}
+    text_results = {}
+    photo_results = {}
+    symbol_results = {}
 
-    background_results = (
-        run_background_analysis(
-            metadata
-        )
-    )
+    localization_results = analyse_visual_evidence(
+        normalized_template, normalized_document, document_type, metadata)
 
-
-    save_json(
-
-        output_folder
-        / "background_analysis.json",
-
-        background_results,
-    )
-
-
-    # =====================================================
-    # 4. EDGE ANALYSIS
-    # =====================================================
-
-    edge_results = (
-        run_edge_analysis(
-            metadata,
-            output_folder,
-        )
-    )
-
-
-    save_json(
-
-        output_folder
-        / "edge_analysis.json",
-
-        edge_results,
-    )
-
-
-    # =====================================================
-    # 5. TEXT STRUCTURE ANALYSIS
-    # =====================================================
-
-    text_results = (
-        run_text_analysis(
-            metadata
-        )
-    )
-
-
-    save_json(
-
-        output_folder
-        / "text_analysis.json",
-
-        text_results,
-    )
-
-
-    # =====================================================
-    # 6. PHOTO ANALYSIS
-    # =====================================================
-
-    photo_results = (
-        run_photo_analysis(
-            document_type,
-            metadata,
-        )
-    )
-
-
-    save_json(
-
-        output_folder
-        / "photo_analysis.json",
-
-        photo_results,
-    )
-
-
-    # =====================================================
-    # 7. SIGNATURE / LOGO ANALYSIS
-    # =====================================================
-
-    symbol_results = (
-        run_symbol_analysis(
-            metadata
-        )
-    )
-
-
-    save_json(
-
-        output_folder
-        / "symbol_analysis.json",
-
-        symbol_results,
-    )
-
-
-    # =====================================================
-    # 8. ALTERED TEXT LOCALIZATION
-    # =====================================================
-
-    localization_results = (
-        run_text_localization(
-            metadata
-        )
-    )
+    if localization_results["comparison_status"] == "UNRELIABLE":
+        return {"status": "INCOMPLETE", "reasonCode": "REFERENCE_COMPARISON_UNRELIABLE",
+                "message": "Widespread appearance differences prevent a reliable local comparison. Check the template edition and recapture under even lighting.",
+                "alignment": alignment, "algorithmVersion": VERSION,
+                "risk_score": None, "risk_level": None,
+                "recommended_action": "MANUAL_REVIEW_REQUIRED"}
 
 
     save_json(
@@ -1472,37 +1320,7 @@ def run_analysis_pipeline(
     # 10. RISK SCORING
     # =====================================================
 
-    analysis_for_risk = {
-
-        "background_analysis":
-            background_results,
-
-        "edge_analysis":
-            edge_results,
-
-        "text_analysis":
-            text_results,
-
-        "photo_analysis":
-            photo_results,
-
-        "symbol_analysis":
-            symbol_results,
-
-        "altered_text_localization":
-            localization_results,
-    }
-
-
-    risk_result = (
-        calculate_risk_score(
-
-            analysis_for_risk,
-
-            ocr_validation=
-                ocr_validation,
-        )
-    )
+    risk_result = score_evidence(localization_results, ocr_validation)
 
 
     # =====================================================
@@ -1525,6 +1343,8 @@ def run_analysis_pipeline(
 
         "status":
             "COMPLETE",
+        "alignment": alignment,
+        "algorithmVersion": VERSION,
 
         "document_type":
             document_type,
@@ -1569,7 +1389,7 @@ def run_analysis_pipeline(
         "highlighted_image":
             highlighted_path.name,
 
-        # Final risk scoring is Step 20.
+        # Fixed-layout discrepancy score.
         "risk_score":
             risk_result[
                 "risk_score"

@@ -1,4 +1,5 @@
-# Adapter dependencies, tested with Python 3.12. Original detectors use Pillow + stdlib.
 fastapi==0.142.2
 uvicorn==0.54.0
 Pillow==12.3.0
+numpy==2.3.5
+opencv-python-headless==5.0.0.93
