@@ -73,9 +73,7 @@ public class DocumentAnalysisService {
             if (type == null || !Boolean.TRUE.equals(type.getAnalysisEnabled()) ||
                     !"ACTIVE".equalsIgnoreCase(type.getStatus()))
                 throw new ResponseStatusException(BAD_REQUEST, "Analysis is disabled for this document type");
-            if (!Set.of("NIC", "DRIVING_LICENCE").contains(type.getTypeCode()))
-                throw new ResponseStatusException(UNPROCESSABLE_CONTENT,
-                        "No configured alteration pipeline for this document type; manual review is required");
+            // Python profiles own supported document types/layouts. Unsupported types return incomplete evidence.
             if (!"LIVE_CAMERA".equals(document.getCaptureSource()) || !"PASSED".equals(document.getQualityStatus()) ||
                     !Boolean.TRUE.equals(document.getBlurPassed()) || !Boolean.TRUE.equals(document.getBrightnessPassed()) ||
                     !Boolean.TRUE.equals(document.getResolutionPassed()) || !secure.hasSecureStorage(documentId))
@@ -90,7 +88,7 @@ public class DocumentAnalysisService {
             row.setDocumentId(documentId); row.setAnalysisStatus("PROCESSING");
             row.setOcrEngine("ML_KIT_LATIN_16.0.1"); row.setOcrFullText(ocr.path("fullText").asString());
             row.setOcrStatus(ocr.path("fullText").asString().isBlank() ? "EMPTY" : "COMPLETED");
-            row.setAlgorithmVersion("component4-step8-1"); row.setReviewStatus("PENDING_REVIEW");
+            row.setAlgorithmVersion("document-analysis-4"); row.setReviewStatus("PENDING_REVIEW");
             row = results.saveAndFlush(row);
             document.setProcessingStatus("ANALYSIS_PENDING");
             documents.saveDocument(document);
@@ -106,15 +104,18 @@ public class DocumentAnalysisService {
             if (response == null || response.length > 24 * 1024 * 1024)
                 throw new IllegalStateException("Invalid analysis response size");
             JsonNode report = json.readTree(response);
-            if (!"COMPLETE".equals(report.path("status").asString()) ||
+            if (!"document-analysis-4".equals(report.path("algorithmVersion").asString()))
+                throw new IllegalStateException("Restart the corrected Python analysis service before analysis");
+            boolean complete = "COMPLETE".equals(report.path("status").asString());
+            if ((!complete && !"INCOMPLETE".equals(report.path("status").asString())) ||
                     !actualHash.equals(report.path("imageSha256").asString()))
                 throw new IllegalStateException("Analysis did not complete for the verified image");
-            BigDecimal score = report.path("risk_score").decimalValue();
-            String level = report.path("risk_level").asString();
-            if (score.compareTo(BigDecimal.ZERO) < 0 || score.compareTo(BigDecimal.valueOf(100)) > 0 ||
-                    !Set.of("LOW", "MEDIUM", "HIGH").contains(level))
+            BigDecimal score = complete ? report.path("risk_score").decimalValue() : null;
+            String level = complete ? report.path("risk_level").asString() : null;
+            if (complete && (score == null || score.compareTo(BigDecimal.ZERO) < 0 || score.compareTo(BigDecimal.valueOf(100)) > 0 ||
+                    !Set.of("LOW", "MEDIUM", "HIGH").contains(level)))
                 throw new IllegalStateException("Invalid risk result");
-            if (!report.path("highlightedImageBase64").isString() || !report.path("normalizedImageBase64").isString())
+            if (complete && (!report.path("highlightedImageBase64").isString() || !report.path("normalizedImageBase64").isString()))
                 throw new IllegalStateException("Analysis images are missing");
             ((tools.jackson.databind.node.ObjectNode) report).put("documentId", documentId.longValue())
                     .put("alterationResultId", row.getAlterationResultId().longValue());
@@ -126,18 +127,19 @@ public class DocumentAnalysisService {
                     .put(encrypted.getIv()).put(encrypted.getEncryptedData()).array(), StandardOpenOption.CREATE_NEW);
             Arrays.fill(response, (byte) 0);
             row.setRiskScore(score); row.setRiskLevel(level);
-            row.setRecommendedAction(report.path("recommended_action").asString());
+            row.setRecommendedAction("MANUAL_REVIEW_REQUIRED");
             row.setSuspiciousRegionCount(report.path("suspicious_area_count").asInt());
             row.setOcrStatus(report.path("ocr_validation").path("status").asString("REVIEW"));
             row.setHighlightedImagePath(artifact.getFileName().toString());
-            row.setAnalysisStatus("COMPLETED");
-            row.setAnalysisMessage("Screening completed. Check OCR, image alignment and findings before manual decision.");
+            row.setAnalysisStatus(complete ? "COMPLETED" : "INCOMPLETE");
+            String analysisMessage = report.path("message").asString("Manual review is required.");
+            row.setAnalysisMessage(analysisMessage.substring(0, Math.min(1000, analysisMessage.length())));
             row.setProcessedAt(LocalDateTime.now());
             row = results.saveAndFlush(row);
-            document.setProcessingStatus("LOW".equals(level) && "PASS".equals(row.getOcrStatus())
-                    ? "ANALYSIS_COMPLETED" : "REVIEW_REQUIRED");
+            document.setProcessingStatus("REVIEW_REQUIRED");
             documents.saveDocument(document);
-            event(adminId, document, "ALTERATION_ANALYSIS", "SUCCESS", "Analysis completed: " + level, ip);
+            event(adminId, document, "ALTERATION_ANALYSIS", complete ? "SUCCESS" : "INCOMPLETE",
+                    complete ? "Screening completed: " + level : "Analysis incomplete; no risk conclusion", ip);
             return row;
         } catch (ResponseStatusException e) {
             if (row != null) fail(row, artifact, adminId, ip);
@@ -166,7 +168,7 @@ public class DocumentAnalysisService {
     public byte[] report(Long id, Long adminId, String ip) {
         AlterationResult row = result(id);
         Document doc = activeDocument(row.getDocumentId());
-        if (!"COMPLETED".equals(row.getAnalysisStatus()) || row.getHighlightedImagePath() == null)
+        if (!Set.of("COMPLETED", "INCOMPLETE").contains(row.getAnalysisStatus()) || row.getHighlightedImagePath() == null)
             throw new ResponseStatusException(NOT_FOUND, "No complete analysis report for this result");
         Path file = root.resolve(row.getHighlightedImagePath()).normalize();
         if (!file.startsWith(root) || !file.getParent().equals(root))
@@ -191,10 +193,15 @@ public class DocumentAnalysisService {
         try {
             AlterationResult row = result(id);
             Document doc = activeDocument(row.getDocumentId());
-            if (!"COMPLETED".equals(row.getAnalysisStatus())) throw new ResponseStatusException(CONFLICT, "Analysis is not complete");
+            if (!Set.of("COMPLETED", "INCOMPLETE").contains(row.getAnalysisStatus()))
+                throw new ResponseStatusException(CONFLICT, "No analysis evidence is available");
+            if ("INCOMPLETE".equals(row.getAnalysisStatus()) && !"REFERRED_FOR_INVESTIGATION".equals(decision))
+                throw new ResponseStatusException(CONFLICT, "Incomplete analysis requires recapture or investigator review");
             if (decision == null || !Set.of("APPROVED", "REJECTED", "REFERRED_FOR_INVESTIGATION").contains(decision) ||
                     notes == null || notes.isBlank() || notes.length() > 1000)
                 throw new ResponseStatusException(BAD_REQUEST, "Select a decision and enter review notes (1–1000 characters)");
+            if (!"document-analysis-4".equals(row.getAlgorithmVersion()) && !"REFERRED_FOR_INVESTIGATION".equals(decision))
+                throw new ResponseStatusException(CONFLICT, "Rerun analysis with the corrected pipeline before recording a decision");
             if ("HIGH".equals(row.getRiskLevel()) && !"REFERRED_FOR_INVESTIGATION".equals(decision))
                 throw new ResponseStatusException(CONFLICT, "High-risk documents must be referred for investigator review");
             if (row.getFinalDecision() != null) throw new ResponseStatusException(CONFLICT, "This result already has a recorded decision");

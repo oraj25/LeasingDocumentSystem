@@ -31,12 +31,12 @@ object OcrFieldExtractor {
         )
 
         val dates = candidates(
-            "\\b(?:[0-9]{4}[-/.][0-9]{1,2}[-/.][0-9]{1,2}|" +
-                    "[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{4})\\b"
+            "\\b(?:[0-9]{4}\\s*[-/.]\\s*[0-9]{1,2}\\s*[-/.]\\s*[0-9]{1,2}|" +
+                    "[0-9]{1,2}\\s*[-/.]\\s*[0-9]{1,2}\\s*[-/.]\\s*[0-9]{4})\\b"
         )
 
         val blood = candidates(
-            "(?<![A-Za-z0-9])(?:AB|A|B|O)[+-](?![A-Za-z0-9])"
+            "(?<![A-Za-z0-9])(?:AB|A|B|O)\\s*[+-](?![A-Za-z0-9])"
         )
 
         val amounts = candidates(
@@ -45,15 +45,19 @@ object OcrFieldExtractor {
 
         // Only use a clearly labelled name.
         // Do not mistake a country or header for a person's name.
-        val names = lines.mapNotNull { line ->
-            Regex(
-                "^\\s*(?:full\\s+name|name)\\s*[:：]\\s*(.+)$",
-                RegexOption.IGNORE_CASE
-            )
-                .find(line)
-                ?.groupValues
-                ?.get(1)
-                ?.trim()
+        val nameLabel = Regex(
+            "^\\s*(?:full\\s+name|name)\\s*[:：]\\s*(.*)$",
+            RegexOption.IGNORE_CASE
+        )
+        val names = lines.mapIndexedNotNull { index, line ->
+            val match = nameLabel.find(line) ?: return@mapIndexedNotNull null
+            val inline = match.groupValues[1].trim()
+            val candidate = inline.ifBlank { lines.getOrNull(index + 1)?.trim().orEmpty() }
+            candidate.takeIf {
+                it.length in 3..150 && it.count(Char::isLetter) >= 3 &&
+                    it.none(Char::isDigit) && ':' !in it && '：' !in it &&
+                    !Regex("(?i)(signature|date|blood|national|licence|identity|sex)").containsMatchIn(it)
+            }
         }.distinct()
 
         return JSONObject()
@@ -65,6 +69,7 @@ object OcrFieldExtractor {
             .put("amounts", JSONArray(amounts))
             .put("nicCandidates", JSONArray(nic))
             .put("licenceCandidates", JSONArray(licence))
+            .put("nameCandidates", JSONArray(names))
             .put(
                 "extractionNote",
                 "Candidates require manual checking; missing or ambiguous values are not inferred."

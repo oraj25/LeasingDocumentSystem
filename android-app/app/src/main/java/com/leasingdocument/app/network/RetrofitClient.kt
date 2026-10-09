@@ -6,19 +6,19 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
 
     /*
      * Physical Android phone -> Windows computer running Spring Boot.
      *
-     * Windows Wi-Fi IPv4:
-     * 10.48.150.89
+     * Current Windows Wi-Fi IPv4:
+     * 10.149.82.89
      *
      * Phone and computer must be connected to the same network.
      */
-    private const val BASE_URL = "http://10.48.150.89:8080/"
-
+    private const val BASE_URL = "http://10.149.82.89:8080/"
 
     // =========================================================
     // AUTHORIZATION INTERCEPTOR
@@ -44,7 +44,6 @@ object RetrofitClient {
         )
     }
 
-
     // =========================================================
     // HTTP LOGGING
     // =========================================================
@@ -57,7 +56,6 @@ object RetrofitClient {
             level = HttpLoggingInterceptor.Level.BASIC
         }
 
-
     // =========================================================
     // OKHTTP CLIENT
     // =========================================================
@@ -66,8 +64,8 @@ object RetrofitClient {
 
         OkHttpClient.Builder()
             .addInterceptor(authInterceptor)
-            .readTimeout(240, java.util.concurrent.TimeUnit.SECONDS)
-            .callTimeout(260, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(240, TimeUnit.SECONDS)
+            .callTimeout(260, TimeUnit.SECONDS)
             .apply {
 
                 if (BuildConfig.DEBUG) {
@@ -76,7 +74,6 @@ object RetrofitClient {
             }
             .build()
     }
-
 
     // =========================================================
     // RETROFIT
