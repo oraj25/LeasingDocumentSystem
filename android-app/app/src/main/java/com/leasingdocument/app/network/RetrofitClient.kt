@@ -14,11 +14,11 @@ object RetrofitClient {
      * Physical Android phone -> Windows computer running Spring Boot.
      *
      * Current Windows Wi-Fi IPv4:
-     * 10.149.82.89
+     * 10.171.133.89
      *
      * Phone and computer must be connected to the same network.
      */
-    private const val BASE_URL = "http://10.149.82.89:8080/"
+    private const val BASE_URL = "http://10.171.133.89:8080/"
 
     // =========================================================
     // AUTHORIZATION INTERCEPTOR

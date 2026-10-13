@@ -26,24 +26,23 @@ import static org.springframework.http.HttpStatus.*;
 public class DocumentAnalysisService {
     private final DocumentService documents;
     private final DocumentTypeService types;
+    private final CustomerService customers;
     private final SecureDocumentService secure;
     private final EncryptionService encryption;
     private final AlterationResultRepository results;
     private final AuditLogService audit;
     private final JsonMapper json = JsonMapper.builder().build();
     private final RestClient client;
-    private final String token;
     private final Path root;
     private final ReentrantLock gate = new ReentrantLock();
 
-    public DocumentAnalysisService(DocumentService documents, DocumentTypeService types,
+    public DocumentAnalysisService(DocumentService documents, CustomerService customers, DocumentTypeService types,
             SecureDocumentService secure, EncryptionService encryption,
             AlterationResultRepository results, AuditLogService audit,
             @Value("${app.analysis.url:http://127.0.0.1:8001}") String url,
-            @Value("${ALTERATION_API_TOKEN:}") String token,
             @Value("${app.secure-storage.root:secure-storage}") String storageRoot) {
-        this.documents = documents; this.types = types; this.secure = secure;
-        this.encryption = encryption; this.results = results; this.audit = audit; this.token = token;
+        this.documents = documents; this.customers = customers; this.types = types; this.secure = secure;
+        this.encryption = encryption; this.results = results; this.audit = audit;
         this.root = Path.of(storageRoot).toAbsolutePath().normalize().resolve("analysis");
         var factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
@@ -51,9 +50,8 @@ public class DocumentAnalysisService {
         this.client = RestClient.builder().baseUrl(url).requestFactory(factory).build();
     }
 
-    public AlterationResult analyze(Long documentId, String imageHash, String ocrJson, Long adminId, String ip) {
-        if (token.length() < 32) throw new ResponseStatusException(SERVICE_UNAVAILABLE,
-                "Set ALTERATION_API_TOKEN for Spring Boot and restart it before analysis");
+    public AlterationResult analyze(Long documentId, String imageHash, String ocrJson,
+            Long referenceDocumentId, Long adminId, String ip) {
         if (imageHash == null || !imageHash.matches("[0-9a-fA-F]{64}") || ocrJson == null || ocrJson.length() > 1_000_000)
             throw new ResponseStatusException(BAD_REQUEST, "Invalid image hash or OCR payload");
         JsonNode ocr;
@@ -65,6 +63,7 @@ public class DocumentAnalysisService {
         } catch (Exception e) { throw new ResponseStatusException(BAD_REQUEST, "Invalid OCR JSON"); }
         if (!gate.tryLock()) throw new ResponseStatusException(CONFLICT, "Analysis is busy; retry when it finishes");
         byte[] original = null;
+        byte[] referenceImage = null;
         AlterationResult row = null;
         Path artifact = null;
         try {
@@ -84,27 +83,58 @@ public class DocumentAnalysisService {
             if (!actualHash.equalsIgnoreCase(imageHash))
                 throw new ResponseStatusException(CONFLICT, "OCR belongs to a different image; reload the document");
 
+            // Only server-side secure originals are sent to Python. Client-supplied bytes
+            // or claims of reference authenticity are never accepted.
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("documentType", type.getTypeCode());
+            payload.put("imageSha256", actualHash);
+            payload.put("imageBase64", Base64.getEncoder().encodeToString(original));
+            payload.put("ocr", ocr);
+            // Authoritative customer details are loaded from MySQL by Spring Boot.
+            Customer customer = customers.getCustomerById(document.getCustomerId());
+            if (customer == null) throw new ResponseStatusException(CONFLICT, "Registered customer not found");
+            payload.put("customerSource", "SERVER_DATABASE");
+            Map<String, Object> customerData = new LinkedHashMap<>();
+            customerData.put("customerId", customer.getCustomerId());
+            customerData.put("fullName", Objects.toString(customer.getFullName(), ""));
+            customerData.put("nic", Objects.toString(customer.getNic(), ""));
+            payload.put("customerData", customerData);
+            payload.put("quality", Map.of("status", "PASSED", "blurPassed", true,
+                    "brightnessPassed", true, "resolutionPassed", true));
+            if (referenceDocumentId != null) {
+                ReferenceSelection reference = approvedReference(document, referenceDocumentId);
+                referenceImage = secure.retrieveAndVerify(reference.document(), null, ip);
+                if (referenceImage == null)
+                    throw new ResponseStatusException(CONFLICT, "Approved reference image is unavailable");
+                String referenceHash = HexFormat.of().formatHex(
+                        MessageDigest.getInstance("SHA-256").digest(referenceImage));
+                payload.put("referenceImageBase64", Base64.getEncoder().encodeToString(referenceImage));
+                payload.put("referenceImageSha256", referenceHash);
+                payload.put("referenceSource", "SERVER_VERIFIED_SAME_DOCUMENT");
+                // Earlier analysis OCR is supplementary; visual comparison works without it.
+                // Pull OCR only from the approved analysis evidence, never from Android.
+                byte[] referenceReport = report(reference.result().getAlterationResultId(), adminId, ip);
+                try {
+                    JsonNode fields = json.readTree(referenceReport).path("ocr").path("fields");
+                    if (fields.isObject()) payload.put("referenceOcr", Map.of("fields", fields));
+                } finally { Arrays.fill(referenceReport, (byte) 0); }
+            }
             row = new AlterationResult();
             row.setDocumentId(documentId); row.setAnalysisStatus("PROCESSING");
             row.setOcrEngine("ML_KIT_LATIN_16.0.1"); row.setOcrFullText(ocr.path("fullText").asString());
             row.setOcrStatus(ocr.path("fullText").asString().isBlank() ? "EMPTY" : "COMPLETED");
-            row.setAlgorithmVersion("document-analysis-4"); row.setReviewStatus("PENDING_REVIEW");
+            row.setAlgorithmVersion("document-analysis-6"); row.setReviewStatus("PENDING_REVIEW");
             row = results.saveAndFlush(row);
             document.setProcessingStatus("ANALYSIS_PENDING");
             documents.saveDocument(document);
             event(adminId, document, "ALTERATION_ANALYSIS", "STARTED", "Analysis started", ip);
-            Map<String, Object> payload = Map.of(
-                    "documentType", type.getTypeCode(), "imageSha256", actualHash,
-                    "imageBase64", Base64.getEncoder().encodeToString(original), "ocr", ocr,
-                    "quality", Map.of("status", "PASSED", "blurPassed", true,
-                            "brightnessPassed", true, "resolutionPassed", true));
             // The response is serialized once and encrypted as a complete evidence bundle.
-            byte[] response = client.post().uri("/analyze").header("X-Analysis-Token", token)
+            byte[] response = client.post().uri("/analyze")
                     .contentType(MediaType.APPLICATION_JSON).body(payload).retrieve().body(byte[].class);
             if (response == null || response.length > 24 * 1024 * 1024)
                 throw new IllegalStateException("Invalid analysis response size");
             JsonNode report = json.readTree(response);
-            if (!"document-analysis-4".equals(report.path("algorithmVersion").asString()))
+            if (!"document-analysis-6".equals(report.path("algorithmVersion").asString()))
                 throw new IllegalStateException("Restart the corrected Python analysis service before analysis");
             boolean complete = "COMPLETE".equals(report.path("status").asString());
             if ((!complete && !"INCOMPLETE".equals(report.path("status").asString())) ||
@@ -117,8 +147,15 @@ public class DocumentAnalysisService {
                 throw new IllegalStateException("Invalid risk result");
             if (complete && (!report.path("highlightedImageBase64").isString() || !report.path("normalizedImageBase64").isString()))
                 throw new IllegalStateException("Analysis images are missing");
-            ((tools.jackson.databind.node.ObjectNode) report).put("documentId", documentId.longValue())
-                    .put("alterationResultId", row.getAlterationResultId().longValue());
+            var enrichedReport = (tools.jackson.databind.node.ObjectNode) report;
+            enrichedReport.put("documentId", documentId.longValue());
+            enrichedReport.put("alterationResultId", row.getAlterationResultId().longValue());
+            enrichedReport.put("referenceDocumentId", referenceDocumentId == null ? -1L : referenceDocumentId);
+            enrichedReport.put("referenceSource", referenceDocumentId == null
+                    ? "NO_SAME_DOCUMENT_REFERENCE" : "PRIOR_ADMIN_APPROVED_CAPTURE");
+            enrichedReport.put("referenceProvenanceNotice", referenceDocumentId == null
+                    ? "Only template and capture screening was performed. Identity fields and photo are not verified."
+                    : "Compared against a prior admin-approved secure capture. This does not prove that the reference is authentic.");
             response = json.writeValueAsBytes(report);
             Files.createDirectories(root);
             artifact = root.resolve(row.getAlterationResultId() + "-" + UUID.randomUUID() + ".enc");
@@ -147,9 +184,10 @@ public class DocumentAnalysisService {
         } catch (Exception e) {
             if (row != null) fail(row, artifact, adminId, ip);
             throw new ResponseStatusException(BAD_GATEWAY,
-                    "Analysis failed. Check the Python service, shared token and templates; then retry.");
+                    "Analysis failed. Check the Python service logs and request compatibility; then retry.");
         } finally {
             if (original != null) Arrays.fill(original, (byte) 0);
+            if (referenceImage != null) Arrays.fill(referenceImage, (byte) 0);
             gate.unlock();
         }
     }
@@ -200,7 +238,7 @@ public class DocumentAnalysisService {
             if (decision == null || !Set.of("APPROVED", "REJECTED", "REFERRED_FOR_INVESTIGATION").contains(decision) ||
                     notes == null || notes.isBlank() || notes.length() > 1000)
                 throw new ResponseStatusException(BAD_REQUEST, "Select a decision and enter review notes (1–1000 characters)");
-            if (!"document-analysis-4".equals(row.getAlgorithmVersion()) && !"REFERRED_FOR_INVESTIGATION".equals(decision))
+            if (!"document-analysis-6".equals(row.getAlgorithmVersion()) && !"REFERRED_FOR_INVESTIGATION".equals(decision))
                 throw new ResponseStatusException(CONFLICT, "Rerun analysis with the corrected pipeline before recording a decision");
             if ("HIGH".equals(row.getRiskLevel()) && !"REFERRED_FOR_INVESTIGATION".equals(decision))
                 throw new ResponseStatusException(CONFLICT, "High-risk documents must be referred for investigator review");
@@ -222,6 +260,45 @@ public class DocumentAnalysisService {
             event(adminId, doc, "ALTERATION_MANUAL_REVIEW", "SUCCESS", "Manual decision: " + decision, ip);
             return row;
         } finally { gate.unlock(); }
+    }
+
+    /** An approved prior capture is a comparison baseline, not an official identity record. */
+    private record ReferenceSelection(Document document, AlterationResult result) {}
+
+    private ReferenceSelection approvedReference(Document current, Long referenceId) {
+        if (referenceId == null || referenceId <= 0 || current.getDocumentId() == null ||
+                referenceId >= current.getDocumentId())
+            throw new ResponseStatusException(BAD_REQUEST,
+                    "Reference must be an earlier, different document");
+        Document reference = activeDocument(referenceId);
+        if (current.getCustomerId() == null ||
+                !current.getCustomerId().equals(reference.getCustomerId()) ||
+                !Objects.equals(current.getDocumentTypeId(), reference.getDocumentTypeId()))
+            throw new ResponseStatusException(BAD_REQUEST,
+                    "Reference must belong to the same customer and document type");
+        if (!"LIVE_CAMERA".equals(reference.getCaptureSource()) ||
+                !"PASSED".equals(reference.getQualityStatus()) ||
+                !Boolean.TRUE.equals(reference.getBlurPassed()) ||
+                !Boolean.TRUE.equals(reference.getBrightnessPassed()) ||
+                !Boolean.TRUE.equals(reference.getResolutionPassed()) ||
+                !secure.hasSecureStorage(referenceId))
+            throw new ResponseStatusException(CONFLICT,
+                    "Reference must be a quality-passed capture in secure storage");
+        AlterationResult latest = results.findAll().stream()
+                .filter(r -> referenceId.equals(r.getDocumentId()))
+                .max(Comparator.comparing(AlterationResult::getAlterationResultId))
+                .orElseThrow(() -> new ResponseStatusException(CONFLICT,
+                        "Reference requires completed manual review"));
+        if (!"COMPLETED".equals(latest.getAnalysisStatus()) ||
+                !"APPROVED".equals(latest.getFinalDecision()) ||
+                !"REVIEWED".equals(latest.getReviewStatus()) ||
+                !("document-analysis-4".equals(latest.getAlgorithmVersion()) ||
+                  "document-analysis-5".equals(latest.getAlgorithmVersion()) ||
+                  "document-analysis-6".equals(latest.getAlgorithmVersion())) ||
+                latest.getHighlightedImagePath() == null)
+            throw new ResponseStatusException(CONFLICT,
+                    "Reference's latest analysis must be completed and admin-approved");
+        return new ReferenceSelection(reference, latest);
     }
 
     private AlterationResult result(Long id) {

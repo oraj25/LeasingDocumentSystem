@@ -14,13 +14,13 @@ import org.springframework.web.bind.annotation.*;
 public class DocumentAnalysisController {
     private final DocumentAnalysisService service;
     public DocumentAnalysisController(DocumentAnalysisService service) { this.service = service; }
-    public record AnalysisRequest(String imageSha256, String ocrJson) {}
+    public record AnalysisRequest(String imageSha256, String ocrJson, Long referenceDocumentId) {}
     public record ReviewRequest(String decision, String notes) {}
 
     @PostMapping("/documents/{id}")
     public AlterationResult analyze(@PathVariable Long id, @RequestBody AnalysisRequest body,
             Authentication auth, HttpServletRequest request) {
-        return service.analyze(id, body.imageSha256(), body.ocrJson(),
+        return service.analyze(id, body.imageSha256(), body.ocrJson(), body.referenceDocumentId(),
                 Long.parseLong(auth.getPrincipal().toString()), request.getRemoteAddr());
     }
 
